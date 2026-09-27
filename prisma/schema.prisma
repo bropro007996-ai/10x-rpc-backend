@@ -1,0 +1,428 @@
+// 10X RPC — Production Prisma schema (PostgreSQL / Neon)
+// Swap this over prisma/schema.prisma before deploying to Vercel + Render.
+// Run:  bash scripts/use-postgres.sh
+// Then: bun run db:push   (with DATABASE_URL + DATABASE_URL_UNPOOLED set to Neon)
+
+generator client {
+  provider        = "prisma-client-js"
+  binaryTargets   = ["native", "linux-musl-openssl-3.0.x", "debian-openssl-3.0.x", "debian-openssl-1.1.x", "rhel-openssl-3.0.x", "rhel-openssl-1.1.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  discordId     String   @unique
+  username      String
+  discriminator String?
+  avatar        String?
+  backgroundUrl String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  sessions        Session[]
+  rpcConfigs      RpcConfig[]
+  gameRpcConfigs   GameRpcConfig[]
+  rotatorPresets  RotatorPreset[]
+  globalConfig    GlobalConfig?
+  trial           Trial?
+  subscriptions   Subscription[]
+  payments        Payment[]
+  notifications   Notification[]
+}
+
+model Session {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token           String   @unique
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+
+  // Discord OAuth tokens (stored server-side only, never sent to client)
+  discordAccessToken    String?
+  discordRefreshToken   String?
+  discordTokenExpiresAt DateTime?
+
+  // Status & RPC state (completely independent)
+  statusEnabled      Boolean  @default(false)
+  rpcEnabled         Boolean  @default(false)
+  gamesRpcEnabled     Boolean  @default(false)
+  gatewayReady        Boolean  @default(false)
+  userStatus         String   @default("online")
+  customStatus       String?
+  customStatusEmoji  String?
+  customStatusImage  String?
+  statusPlatform     String   @default("mobile")
+  lastPresenceUpdate DateTime?
+
+  // VR / Meta Quest state
+  vrStatusActive     Boolean  @default(false)
+  vrSessionToken     String?
+  vrMetaAccessToken  String?
+  vrMetaRefreshToken String?
+  vrMetaTokenExpires DateTime?
+
+  // Smart sleep timer
+  sleepTimerActive Boolean  @default(false)
+  sleepTimerEndsAt DateTime?
+
+  @@index([userId])
+}
+
+model RpcConfig {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String   @default("10X RPC")
+  type         String   @default("PLAYING")
+  platform     String   @default("desktop")
+  state        String?
+  details      String?
+  largeImage   String?
+  largeText    String?
+  smallImage   String?
+  smallText    String?
+  button1Label String?
+  button1Url   String?
+  button2Label String?
+  button2Url   String?
+  partyCurrent Int?
+  partyMax     Int?
+  partyId      String?
+  partySecret  String?
+  startMinsAgo Int      @default(0)
+  endTotalMins Int?
+  enabled      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+
+
+// Games RPC — completely separate from Normal RPC.
+// Uses a real game's app_id (from spoofGames) as the Discord application_id.
+model GameRpcConfig {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gameSlug      String   @default("minecraft")
+  enabled       Boolean  @default(false)
+  state         String?
+  details       String?
+  largeImage    String?
+  largeText     String?
+  smallImage    String?
+  smallText     String?
+  button1Label  String?
+  button1Url   String?
+  button2Label  String?
+  button2Url    String?
+  partyCurrent  Int      @default(1)
+  partyMax      Int      @default(5)
+  startMinsAgo  Int      @default(0)
+  endTotalMins  Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model RotatorPreset {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emoji        String?
+  text         String
+  durationMins Int      @default(5)
+  order        Int      @default(0)
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model GlobalConfig {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  city                String?
+  timezone            String   @default("Asia/Calcutta")
+  rotatorEnabled      Boolean  @default(false)
+  rotatorIntervalMins Int      @default(5)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model Trial {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startsAt  DateTime @default(now())
+  endsAt    DateTime
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+
+model Subscription {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan            String   @default("trial")
+  status          String   @default("active")
+  paymentId       String?
+  amountPaid      Int      @default(0)
+  currency        String   @default("inr")
+  startsAt        DateTime @default(now())
+  endsAt          DateTime
+  autoRenew       Boolean  @default(false)
+  suspendedAt     DateTime?
+  gracePeriodEnd  DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([endsAt])
+  @@index([suspendedAt])
+}
+
+model OAuthState {
+  id        String   @id @default(cuid())
+  state     String   @unique
+  verifier  String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([state])
+}
+
+// ===== Admin-only models (added to support the admin panel) =====
+
+model SiteSettings {
+  id              String   @id
+  siteName        String   @default("10X RPC")
+  heroTitle       String   @default("Take control of your Discord presence")
+  heroSubtitle    String   @default("10X RPC puts you in charge of your status, activity, and presence — 24/7.")
+  discordInvite   String   @default("https://discord.gg/JjsPqbWnrH")
+  supportText     String?
+  maintenanceMode Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Announcement {
+  id        String   @id @default(cuid())
+  type      String   @default("info") // info | update | warning | maintenance
+  title     String
+  message   String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  target    String?
+  actor     String
+  metadata  String?
+  createdAt DateTime @default(now())
+
+  @@index([action])
+  @@index([actor])
+  @@index([createdAt])
+}
+
+model Payment {
+  id                String   @id @default(cuid())
+  userId            String
+  planId            String
+  planName          String
+  amount            Int
+  currency          String   @default("inr")
+  status            String   @default("created")
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  internalOrderId   String?
+  verifiedAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String   @default("info")
+  title     String
+  message   String
+  metadata  String?
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([readAt])
+  @@index([createdAt])
+}
+
+model Plan {
+  id              String    @id @default(cuid())
+  name            String
+  slug            String    @unique
+  priceInr        Int       @default(0)
+  originalPriceInr Int?
+  offerPriceInr   Int?
+  offerEnabled    Boolean   @default(false)
+  offerTag        String?
+  offerText       String?
+  offerStartsAt   DateTime?
+  offerEndsAt     DateTime?
+  durationDays    Int
+  durationUnit    String    @default("days")
+  description     String?
+  features        String    @default("[]")
+  isActive        Boolean   @default(true)
+  isVisible       Boolean   @default(true)
+  isArchived      Boolean   @default(false)
+  isPopular       Boolean   @default(false)
+  isRecommended   Boolean   @default(false)
+  badge           String?
+  displayOrder    Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([isActive])
+  @@index([isVisible])
+  @@index([isArchived])
+  @@index([displayOrder])
+}
+
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  label       String
+  description String?
+  enabled     Boolean  @default(false)
+  category    String   @default("general")
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@index([category])
+  @@index([enabled])
+}
+
+model Webhook {
+  id          String   @id @default(cuid())
+  url         String
+  secret      String?
+  events      String   @default("[]")
+  isActive    Boolean  @default(true)
+  description String?
+  lastTriggeredAt DateTime?
+  lastStatus  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deliveries  WebhookDelivery[]
+
+  @@index([isActive])
+}
+
+model WebhookDelivery {
+  id          String   @id @default(cuid())
+  webhookId   String
+  webhook     Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  event       String
+  payload     String
+  statusCode  Int?
+  response    String?
+  status      String   @default("pending")
+  createdAt   DateTime @default(now())
+
+  @@index([webhookId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model IpBlock {
+  id        String   @id @default(cuid())
+  ip        String   @unique
+  reason    String?
+  blockedBy String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([ip])
+}
+
+model ActivityEvent {
+  id        String   @id @default(cuid())
+  userId    String?
+  username  String?
+  type      String
+  category  String   @default("user")
+  ip        String?
+  metadata  String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([type])
+  @@index([category])
+  @@index([createdAt])
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  name        String
+  keyHash     String   @unique
+  prefix      String
+  permissions String   @default("[]")
+  lastUsedAt  DateTime?
+  lastUsedIp  String?
+  isActive    Boolean  @default(true)
+  createdBy   String?
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([prefix])
+}
+
+model MaintenanceWindow {
+  id          String   @id @default(cuid())
+  title       String
+  message     String
+  startsAt    DateTime
+  endsAt      DateTime
+  isActive    Boolean  @default(true)
+  isResolved  Boolean  @default(false)
+  createdBy   String?
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([isResolved])
+  @@index([startsAt])
+}

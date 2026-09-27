@@ -1,0 +1,23 @@
+{
+  "name": "10x-rpc-backend",
+  "version": "1.0.0",
+  "description": "10X RPC Backend Server — 24/7 Discord Gateway daemon",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "postinstall": "npx prisma generate"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.2",
+    "dotenv": "^16.4.5",
+    "tsx": "^4.19.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
