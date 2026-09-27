@@ -206,18 +206,15 @@ async function setAssetPublic(key: string): Promise<boolean> {
 /**
  * Convert an image reference to a Discord-acceptable large_image value.
  *
- * Strategy (in priority order):
- *   1. If it's already a Discord asset ID/key (no http://), return as-is
- *   2. If it's a GIF URL, use mp:external format (preserves original URL —
- *      uploading a GIF as a Discord asset converts it to static PNG, losing
- *      animation. mp:external keeps the original URL so the frontend preview
- *      can still display the animated GIF).
- *   3. If it's a non-GIF HTTPS URL, upload it as a Discord app asset and
- *      return the ASSET ID (numeric)
- *   4. If upload fails, fall back to mp:external format
+ * Uses the SAME logic as Discord's SDK parseImage():
+ *   - cdn.discordapp.com URLs → mp: prefix
+ *   - media.discordapp.net URLs → mp: prefix
+ *   - Other HTTP/HTTPS URLs → mp:external/<base64url> format
+ *   - Discord asset IDs (17-19 digits) → return as-is
+ *   - Already mp:/external:/spotify: etc → return as-is
  *
- * CRITICAL: Discord's gateway accepts the ASSET ID (numeric string), NOT the asset key.
- * Using the key causes Discord to silently strip the assets block (blank image).
+ * GIF URLs are NOT uploaded as static assets (Discord converts them to PNG).
+ * Instead, they use mp:external format which preserves the original animated URL.
  */
 export async function resolveImageToAssetKey(
   image: string | null | undefined
@@ -226,19 +223,41 @@ export async function resolveImageToAssetKey(
   const trimmed = image.trim()
   if (!trimmed) return null
 
-  // Already a Discord asset ID/key or mp:external format
+  // Already a Discord asset ID (17-19 digits) — return as-is
+  if (/^[0-9]{17,19}$/.test(trimmed)) {
+    return trimmed
+  }
+
+  // Already in mp:/external:/spotify: etc format — return as-is
+  if (['mp:', 'external/', 'youtube:', 'spotify:', 'twitch:'].some(v => trimmed.startsWith(v))) {
+    return trimmed
+  }
+
+  // Not a URL — return as-is (could be a Discord asset key)
   if (!/^https?:\/\//i.test(trimmed)) {
     return trimmed
   }
 
+  // Discord CDN URLs → convert to mp: prefix (same as Discord SDK)
+  if (/^https?:\/\/cdn\.discordapp\.com\//i.test(trimmed)) {
+    const result = trimmed.replace(/^https?:\/\/cdn\.discordapp\.com\//i, 'mp:')
+    console.log(`[resolveImageToAssetKey] Discord CDN URL → ${result.substring(0, 80)}...`)
+    return result
+  }
+  if (/^https?:\/\/media\.discordapp\.net\//i.test(trimmed)) {
+    const result = trimmed.replace(/^https?:\/\/media\.discordapp\.net\//i, 'mp:')
+    console.log(`[resolveImageToAssetKey] Discord media URL → ${result.substring(0, 80)}...`)
+    return result
+  }
+
   // GIF URLs — do NOT upload as asset (Discord converts to static PNG).
   // Use mp:external format to preserve the original animated GIF URL.
-  // The frontend preview will still animate because it uses the original URL.
   if (/\.gif(\?|$)/i.test(trimmed)) {
     try {
       const b64 = Buffer.from(trimmed).toString('base64url')
-      console.log(`[resolveImageToAssetKey] GIF URL detected — using mp:external to preserve animation: ${trimmed.substring(0, 80)}...`)
-      return `mp:external/${b64}`
+      const result = `mp:external/${b64}`
+      console.log(`[resolveImageToAssetKey] GIF URL → mp:external (preserving animation): ${trimmed.substring(0, 80)}...`)
+      return result
     } catch {
       return null
     }
@@ -249,14 +268,13 @@ export async function resolveImageToAssetKey(
     const asset = await uploadImageAsAsset(trimmed)
     if (asset) {
       // Return the ASSET ID (numeric string) — Discord's gateway requires this, not the key.
-      // Using the key causes Discord to silently strip the assets block (image won't show).
       return asset.assetId
     }
   } catch (e) {
     console.error('[resolveImageToAssetKey] Upload failed:', e)
   }
 
-  // Upload failed — fall back to mp:external format (may work on some gateway versions)
+  // Upload failed — fall back to mp:external format
   try {
     const b64 = Buffer.from(trimmed).toString('base64url')
     return `mp:external/${b64}`
