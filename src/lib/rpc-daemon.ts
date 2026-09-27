@@ -612,14 +612,7 @@ export class RpcDaemon {
       })
 
       ws.on('error', (err) => {
-        // WebSocket errors often have empty .message — log the full error for debugging
-        const errInfo = err.message || err.code || JSON.stringify({
-          code: (err as any).code,
-          errno: (err as any).errno,
-          syscall: (err as any).syscall,
-          hostname: (err as any).hostname,
-        })
-        console.error(`[10X RPC Daemon] Gateway WS error for user ${userId}:`, errInfo)
+        console.error(`[10X RPC Daemon] Gateway WS error for user ${userId}:`, err.message)
         userSock.connected = false
         userSock.isConnecting = false
         this.cleanupSocket(userSock)

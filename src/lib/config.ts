@@ -6,9 +6,13 @@ export const CONFIG = {
     clientId: process.env.DISCORD_CLIENT_ID || '',
     clientSecret: process.env.DISCORD_CLIENT_SECRET || '',
     botToken: process.env.DISCORD_BOT_TOKEN || '',
-    // The redirect_uri MUST point to the Render backend (where /auth/callback runs).
+    // The redirect_uri MUST point to the FRONTEND (Vercel) — NOT the backend.
+    // The frontend handles the full OAuth callback (exchanges code, creates session).
+    // The backend only reads Discord tokens from the shared database.
     // This must match what's registered in Discord Developer Portal.
-    redirectUri: process.env.DISCORD_REDIRECT_URI || 'http://localhost:3000/auth/callback',
+    // Hardcoded to https://10xrpc.shop/auth/discord/callback — env var is ignored
+    // to prevent stale env vars from pointing to the wrong URL.
+    redirectUri: 'https://10xrpc.shop/auth/discord/callback',
     // Gaming SDK scope — required for the Gaming SDK gateway connection.
     scope: process.env.DISCORD_OAUTH_SCOPE || 'openid identify sdk.social_layer_presence',
     authorizeUrl: 'https://discord.com/api/oauth2/authorize',
