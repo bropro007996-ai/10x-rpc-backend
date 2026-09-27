@@ -206,15 +206,13 @@ async function setAssetPublic(key: string): Promise<boolean> {
 /**
  * Convert an image reference to a Discord-acceptable large_image value.
  *
- * Uses the SAME logic as Discord's SDK parseImage():
- *   - cdn.discordapp.com URLs → mp: prefix
- *   - media.discordapp.net URLs → mp: prefix
- *   - Other HTTP/HTTPS URLs → mp:external/<base64url> format
- *   - Discord asset IDs (17-19 digits) → return as-is
- *   - Already mp:/external:/spotify: etc → return as-is
+ * Strategy (in priority order):
+ *   1. If it's already a Discord asset ID/key (no http://), return as-is
+ *   2. If it's an HTTPS URL, upload it as a Discord app asset and return the ASSET ID (numeric)
+ *   3. If upload fails, return null (omit large_image — Discord shows app icon)
  *
- * GIF URLs are NOT uploaded as static assets (Discord converts them to PNG).
- * Instead, they use mp:external format which preserves the original animated URL.
+ * CRITICAL: Discord's gateway accepts the ASSET ID (numeric string), NOT the asset key.
+ * Using the key causes Discord to silently strip the assets block (blank image).
  */
 export async function resolveImageToAssetKey(
   image: string | null | undefined
@@ -223,58 +221,24 @@ export async function resolveImageToAssetKey(
   const trimmed = image.trim()
   if (!trimmed) return null
 
-  // Already a Discord asset ID (17-19 digits) — return as-is
-  if (/^[0-9]{17,19}$/.test(trimmed)) {
-    return trimmed
-  }
-
-  // Already in mp:/external:/spotify: etc format — return as-is
-  if (['mp:', 'external/', 'youtube:', 'spotify:', 'twitch:'].some(v => trimmed.startsWith(v))) {
-    return trimmed
-  }
-
-  // Not a URL — return as-is (could be a Discord asset key)
+  // Already a Discord asset ID/key or mp:external format
   if (!/^https?:\/\//i.test(trimmed)) {
     return trimmed
   }
 
-  // Discord CDN URLs → convert to mp: prefix (same as Discord SDK)
-  if (/^https?:\/\/cdn\.discordapp\.com\//i.test(trimmed)) {
-    const result = trimmed.replace(/^https?:\/\/cdn\.discordapp\.com\//i, 'mp:')
-    console.log(`[resolveImageToAssetKey] Discord CDN URL → ${result.substring(0, 80)}...`)
-    return result
-  }
-  if (/^https?:\/\/media\.discordapp\.net\//i.test(trimmed)) {
-    const result = trimmed.replace(/^https?:\/\/media\.discordapp\.net\//i, 'mp:')
-    console.log(`[resolveImageToAssetKey] Discord media URL → ${result.substring(0, 80)}...`)
-    return result
-  }
-
-  // GIF URLs — do NOT upload as asset (Discord converts to static PNG).
-  // Use mp:external format to preserve the original animated GIF URL.
-  if (/\.gif(\?|$)/i.test(trimmed)) {
-    try {
-      const b64 = Buffer.from(trimmed).toString('base64url')
-      const result = `mp:external/${b64}`
-      console.log(`[resolveImageToAssetKey] GIF URL → mp:external (preserving animation): ${trimmed.substring(0, 80)}...`)
-      return result
-    } catch {
-      return null
-    }
-  }
-
-  // Non-GIF HTTPS URL — try uploading as a Discord app asset (static image)
+  // HTTPS URL — try uploading as a Discord app asset
   try {
     const asset = await uploadImageAsAsset(trimmed)
     if (asset) {
       // Return the ASSET ID (numeric string) — Discord's gateway requires this, not the key.
+      // Using the key causes Discord to silently strip the assets block (image won't show).
       return asset.assetId
     }
   } catch (e) {
     console.error('[resolveImageToAssetKey] Upload failed:', e)
   }
 
-  // Upload failed — fall back to mp:external format
+  // Upload failed — fall back to mp:external format (may work on some gateway versions)
   try {
     const b64 = Buffer.from(trimmed).toString('base64url')
     return `mp:external/${b64}`

@@ -105,3 +105,50 @@ export async function daemonStopUserRpc(userId: string): Promise<DaemonBridgeRes
     return { ok: false, method: 'local-daemon', message: e instanceof Error ? e.message : 'failed' }
   }
 }
+
+/**
+ * Tell the daemon to FORCE a fresh reconnect + push for a user.
+ * This disconnects the existing socket and opens a new one, ensuring
+ * the latest DB config is read and pushed to Discord.
+ * Used when config changes don't seem to take effect (stale cache).
+ */
+export async function daemonForcePush(userId: string): Promise<DaemonBridgeResult> {
+  const renderUrl = CONFIG.render.backendUrl
+  if (renderUrl) {
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), 12000)
+      const res = await fetch(`${renderUrl}/force-push?userId=${encodeURIComponent(userId)}`, {
+        method: 'POST',
+        signal: ctrl.signal,
+        cache: 'no-store',
+      })
+      clearTimeout(t)
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}))
+        return {
+          ok: !!data.ok,
+          method: 'render-http',
+          message: data.message || 'Force-pushed via backend',
+        }
+      }
+      return { ok: false, method: 'render-http', message: `Backend /force-push returned ${res.status}` }
+    } catch (e) {
+      return {
+        ok: false,
+        method: 'render-http',
+        message: e instanceof Error ? e.message : 'fetch failed',
+      }
+    }
+  }
+  // Fallback: in-process ephemeral daemon
+  try {
+    const daemon = ensureDaemonRunning()
+    daemon.disconnectUser(userId)
+    await new Promise(r => setTimeout(r, 500))
+    await daemon.syncUser(userId)
+    return { ok: true, method: 'local-daemon', message: 'Force-pushed via local daemon' }
+  } catch (e) {
+    return { ok: false, method: 'local-daemon', message: e instanceof Error ? e.message : 'failed' }
+  }
+}

@@ -10,9 +10,9 @@ export const CONFIG = {
     // The frontend handles the full OAuth callback (exchanges code, creates session).
     // The backend only reads Discord tokens from the shared database.
     // This must match what's registered in Discord Developer Portal.
-    // Hardcoded to https://10xrpc.shop/auth/discord/callback — env var is ignored
+    // Hardcoded to https://www.10xrpc.shop/auth/discord/callback — env var is ignored
     // to prevent stale env vars from pointing to the wrong URL.
-    redirectUri: 'https://10xrpc.shop/auth/discord/callback',
+    redirectUri: 'https://www.10xrpc.shop/auth/discord/callback',
     // Gaming SDK scope — required for the Gaming SDK gateway connection.
     scope: process.env.DISCORD_OAUTH_SCOPE || 'openid identify sdk.social_layer_presence',
     authorizeUrl: 'https://discord.com/api/oauth2/authorize',
@@ -37,10 +37,10 @@ export const CONFIG = {
     geocodeUrl: 'https://geocoding-api.open-meteo.com/v1/search',
     forecastUrl: 'https://api.open-meteo.com/v1/forecast',
   },
-  // Render backend (24/7 daemon) — used by /uptime to health-check the daemon.
+  // Backend server (24/7 daemon) — used by /uptime to health-check the daemon.
   // Set RENDER_BACKEND_URL in production; empty/absent = daemon not deployed.
   render: {
-    backendUrl: process.env.RENDER_BACKEND_URL || 'https://one0x-rpc-backend-sg.onrender.com',
+    backendUrl: process.env.RENDER_BACKEND_URL || 'http://92.118.206.201:30225',
     healthPath: '/health',
   },
   session: {
