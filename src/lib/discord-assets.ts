@@ -208,8 +208,13 @@ async function setAssetPublic(key: string): Promise<boolean> {
  *
  * Strategy (in priority order):
  *   1. If it's already a Discord asset ID/key (no http://), return as-is
- *   2. If it's an HTTPS URL, upload it as a Discord app asset and return the ASSET ID (numeric)
- *   3. If upload fails, return null (omit large_image — Discord shows app icon)
+ *   2. If it's a GIF URL, use mp:external format (preserves original URL —
+ *      uploading a GIF as a Discord asset converts it to static PNG, losing
+ *      animation. mp:external keeps the original URL so the frontend preview
+ *      can still display the animated GIF).
+ *   3. If it's a non-GIF HTTPS URL, upload it as a Discord app asset and
+ *      return the ASSET ID (numeric)
+ *   4. If upload fails, fall back to mp:external format
  *
  * CRITICAL: Discord's gateway accepts the ASSET ID (numeric string), NOT the asset key.
  * Using the key causes Discord to silently strip the assets block (blank image).
@@ -226,7 +231,20 @@ export async function resolveImageToAssetKey(
     return trimmed
   }
 
-  // HTTPS URL — try uploading as a Discord app asset
+  // GIF URLs — do NOT upload as asset (Discord converts to static PNG).
+  // Use mp:external format to preserve the original animated GIF URL.
+  // The frontend preview will still animate because it uses the original URL.
+  if (/\.gif(\?|$)/i.test(trimmed)) {
+    try {
+      const b64 = Buffer.from(trimmed).toString('base64url')
+      console.log(`[resolveImageToAssetKey] GIF URL detected — using mp:external to preserve animation: ${trimmed.substring(0, 80)}...`)
+      return `mp:external/${b64}`
+    } catch {
+      return null
+    }
+  }
+
+  // Non-GIF HTTPS URL — try uploading as a Discord app asset (static image)
   try {
     const asset = await uploadImageAsAsset(trimmed)
     if (asset) {
