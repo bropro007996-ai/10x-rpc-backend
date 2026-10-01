@@ -8,27 +8,89 @@ import type { RpcConfig } from './api-client'
 import type { PlaceholderContext } from './placeholders'
 import { resolvePlaceholders } from './placeholders'
 import { resolveRpcActivityName } from './constants'
-import { resolveImageToAssetKey } from './discord-assets'
 
 /**
- * Convert an image reference to Discord's expected format.
+ * Parse an image reference into Discord's expected `large_image` / `small_image` format.
  *
- * Discord's `large_image` / `small_image` fields accept:
- *   1. A Discord asset key (uploaded via Developer Portal) — returned as-is
- *   2. `mp:external/<base64url>` for external images — HTTPS URLs are encoded
- *   3. If omitted entirely, Discord shows the app's default icon based on application_id
+ * Mirrors the Discord Gaming SDK's `parseImage()` spec:
  *
- * Raw HTTPS URLs are NOT accepted — Discord silently drops them, causing the image
- * to not appear. This helper converts HTTPS URLs to the mp:external format.
+ *   1. Discord CDN URLs (`cdn.discordapp.com` / `media.discordapp.net`) → `mp:` prefix.
+ *      This preserves the original path INCLUDING the `.gif` extension, so animated
+ *      emoji/GIF assets render correctly. Example:
+ *        https://cdn.discordapp.com/emojis/1234567890.gif  →  mp:emojis/1234567890.gif
+ *        https://cdn.discordapp.com/app-assets/{app}/{id}.png → mp:app-assets/{app}/{id}.png
+ *
+ *      CRITICAL: query strings (?ex=...&is=...&hm=...) are STRIPPED before
+ *      conversion. When users copy emoji URLs from Discord, they often include
+ *      signed CDN parameters that (a) expire and (b) break the media proxy.
+ *      The base path mp:emojis/123.gif works without signatures for public assets.
+ *
+ *   2. Asset IDs (17–19 digit snowflakes) → passed through unchanged.
+ *
+ *   3. Already-prefixed values (`mp:`, `youtube:`, `spotify:`, `twitch:`) → passed through.
+ *
+ *   4. `external/...` paths → prefixed with `mp:` (becomes `mp:external/...`).
+ *
+ *   5. Arbitrary HTTPS URLs (NOT Discord CDN — e.g. Giphy, Imgur, Tenor) →
+ *      `mp:external/<base64url-of-full-url>`. This is the format Discord's OWN
+ *      client uses for external images. The media proxy fetches the image from
+ *      the external URL and serves it through Discord's CDN, PRESERVING the GIF
+ *      animation (the content-type is passed through).
+ *
+ *      This is the CORRECT behavior — previously this threw INVALID_URL which
+ *      caused the image to be omitted entirely (no image shown at all). Now
+ *      external GIF URLs work via the media proxy.
+ *
+ * GIF support: by converting Discord CDN URLs to `mp:` prefix (preserves .gif
+ * extension in path) AND encoding external URLs as `mp:external/<base64url>`
+ * (media proxy preserves content-type), GIFs work in BOTH cases.
+ *
+ * Exported so it can be used by the custom-status emoji parser + diagnostic endpoints.
  */
-function toDiscordImage(image: string | null | undefined): string | null {
-  if (!image) return null
+export function parseImage(image: string | null | undefined): string | null {
+  if (image == null) return null
+  if (typeof image !== 'string') return null
   const trimmed = image.trim()
   if (!trimmed) return null
-  // Already a Discord asset key or mp:external format
-  if (trimmed.startsWith('mp:') || trimmed.startsWith('spotify:')) return trimmed
-  // HTTPS URL → convert to mp:external/<base64url>
-  if (/^https?:\/\//i.test(trimmed)) {
+
+  // Try to parse as a URL — if it's an http(s) URL, handle Discord CDN specially
+  let isHttpUrl = false
+  try {
+    if (URL.canParse(trimmed) && ['http:', 'https:'].includes(new URL(trimmed).protocol)) {
+      isHttpUrl = true
+    }
+  } catch {
+    isHttpUrl = false
+  }
+
+  if (isHttpUrl) {
+    // For Discord CDN URLs: STRIP query strings + fragments before conversion.
+    // Discord CDN signed URLs (?ex=...&is=...&hm=...) expire and break the media proxy.
+    // The base path (e.g. emojis/123.gif) is publicly accessible without signatures.
+    let cleanPath = trimmed
+    const qIdx = cleanPath.indexOf('?')
+    if (qIdx >= 0) cleanPath = cleanPath.substring(0, qIdx)
+    const hIdx = cleanPath.indexOf('#')
+    if (hIdx >= 0) cleanPath = cleanPath.substring(0, hIdx)
+
+    // Convert Discord CDN URLs to `mp:` prefix (preserves .gif extension in path)
+    let converted = cleanPath
+      .replace('https://cdn.discordapp.com/', 'mp:')
+      .replace('http://cdn.discordapp.com/', 'mp:')
+      .replace('https://media.discordapp.net/', 'mp:')
+      .replace('http://media.discordapp.net/', 'mp:')
+
+    if (converted.startsWith('mp:')) {
+      // Discord CDN URL successfully converted — .gif extension preserved in path
+      return converted
+    }
+
+    // Arbitrary HTTPS URL (Giphy, Imgur, Tenor, etc.) — encode as
+    // mp:external/<base64url-of-FULL-url>. This is what Discord's own client
+    // does for external images. The media proxy fetches the image and serves
+    // it through Discord's CDN, preserving the GIF content-type.
+    // IMPORTANT: encode the FULL URL (including query params) — the media proxy
+    // needs the complete URL to fetch the right resource.
     try {
       const b64 = Buffer.from(trimmed).toString('base64url')
       return `mp:external/${b64}`
@@ -36,8 +98,76 @@ function toDiscordImage(image: string | null | undefined): string | null {
       return null
     }
   }
-  // Otherwise it's a Discord asset key — return as-is
+
+  // Asset ID (17–19 digit Discord snowflake) — pass through
+  if (/^[0-9]{17,19}$/.test(trimmed)) {
+    return trimmed
+  }
+
+  // Already-prefixed values — pass through (strip query strings for mp: paths)
+  if (['mp:', 'youtube:', 'spotify:', 'twitch:'].some((v) => trimmed.startsWith(v))) {
+    let clean = trimmed
+    const qIdx = clean.indexOf('?')
+    if (qIdx >= 0) clean = clean.substring(0, qIdx)
+    const hIdx = clean.indexOf('#')
+    if (hIdx >= 0) clean = clean.substring(0, hIdx)
+    return clean
+  }
+
+  // `external/...` path → prefix with `mp:`
+  if (trimmed.startsWith('external/')) {
+    return `mp:${trimmed}`
+  }
+
+  // Fallback: treat as a Discord asset key — pass through
   return trimmed
+}
+
+/**
+ * Parse a custom-status emoji reference into Discord's `emoji` object format.
+ *
+ * Supports:
+ *   - Unicode emoji (e.g. "🎮", "😀") → { name: "🎮" }
+ *   - Discord custom emoji mention format:  <:name:id>  or  <a:name:id> (animated)
+ *     → { name: "name", id: "id" }
+ *   - Discord emoji CDN URL (incl. .gif):
+ *       https://cdn.discordapp.com/emojis/123.gif
+ *     → { name: "emoji", id: "123" }  (Discord resolves the animated asset by ID)
+ *   - Raw emoji ID (17–19 digit snowflake) → { name: "emoji", id: "id" }
+ *
+ * The `id` field is what makes Discord render custom (potentially animated GIF)
+ * emoji in the custom status. Without it, Discord treats the value as a unicode
+ * emoji name and silently drops custom emoji.
+ */
+export function parseCustomEmoji(
+  emoji: string | null | undefined
+): { name: string; id?: string } | null {
+  if (!emoji) return null
+  const trimmed = emoji.trim()
+  if (!trimmed) return null
+
+  // Discord custom emoji mention:  <:name:id>  or  <a:name:id>
+  const mentionMatch = trimmed.match(/^<a?:(.+):([0-9]{17,19})>$/)
+  if (mentionMatch) {
+    return { name: mentionMatch[1], id: mentionMatch[2] }
+  }
+
+  // Discord emoji CDN URL — extract the emoji ID from the path
+  // e.g. https://cdn.discordapp.com/emojis/123456789012345678.gif
+  const urlMatch = trimmed.match(
+    /(?:cdn\.discordapp\.com|media\.discordapp\.net)\/emojis\/([0-9]{17,19})(?:\.(?:gif|png|webp|jpeg|jpg))?/i
+  )
+  if (urlMatch) {
+    return { name: 'emoji', id: urlMatch[1] }
+  }
+
+  // Raw emoji ID (17–19 digit snowflake)
+  if (/^[0-9]{17,19}$/.test(trimmed)) {
+    return { name: 'emoji', id: trimmed }
+  }
+
+  // Unicode emoji — just the name
+  return { name: trimmed }
 }
 
 // Activity types mapped to Discord's numeric values
@@ -118,14 +248,15 @@ export async function buildActivityPayload(
     activity.party = party
   }
 
-  // Assets (images) — upload custom images to Discord app as assets (returns asset key)
-  // Raw HTTPS URLs and mp:external/ do NOT work on the Gaming SDK gateway — the image
-  // is silently dropped. We upload the image via the bot token and use the asset key.
+  // Assets (images) — parse via the Discord SDK's parseImage() spec.
+  // Discord CDN URLs (incl. emoji GIFs) → `mp:` prefix (preserves .gif extension).
+  // External URLs (Giphy, Imgur, etc.) → mp:external/<base64url> (media proxy).
+  // Asset IDs / mp: prefixed → pass through.
   const assets: Record<string, string> = {}
-  const largeImg = await resolveImageToAssetKey(cfg.largeImage)
+  const largeImg = parseImage(cfg.largeImage)
   if (largeImg) assets.large_image = largeImg
   if (cfg.largeText) assets.large_text = cfg.largeText
-  const smallImg = await resolveImageToAssetKey(cfg.smallImage)
+  const smallImg = parseImage(cfg.smallImage)
   if (smallImg) assets.small_image = smallImg
   if (cfg.smallText) assets.small_text = cfg.smallText
   if (Object.keys(assets).length > 0) activity.assets = assets
@@ -238,20 +369,20 @@ export async function buildGameActivityPayload(
     activity.party = party
   }
 
-  // Assets
+  // Assets — parse via the Discord SDK's parseImage() spec.
   // For spoofed games (application_id = game's app_id), if no custom image is provided,
   // OMIT large_image entirely — Discord shows the game's official icon via application_id.
-  // If a custom image IS provided, upload it as a Discord app asset (returns key) —
-  // raw HTTPS URLs and mp:external/ do NOT work on the Gaming SDK gateway.
+  // If a custom image IS provided, parse it: Discord CDN URLs → `mp:` prefix (preserves
+  // .gif for animated emoji), external URLs → mp:external/<base64url>.
   const assets: Record<string, string> = {}
   if (cfg.largeImage) {
-    const largeKey = await resolveImageToAssetKey(cfg.largeImage)
+    const largeKey = parseImage(cfg.largeImage)
     if (largeKey) assets.large_image = largeKey
   }
   if (cfg.largeText) assets.large_text = cfg.largeText
   else if (cfg.name) assets.large_text = cfg.name
   if (cfg.smallImage) {
-    const smallKey = await resolveImageToAssetKey(cfg.smallImage)
+    const smallKey = parseImage(cfg.smallImage)
     if (smallKey) assets.small_image = smallKey
   }
   if (cfg.smallText) assets.small_text = cfg.smallText
@@ -280,6 +411,10 @@ export async function buildGameActivityPayload(
 
 /**
  * Build Discord custom status activity payload (Activity Type 4).
+ *
+ * Uses parseCustomEmoji() so that Discord custom emoji (incl. animated GIF emoji)
+ * are correctly resolved. Previously this just set `emoji.name = rawValue`, which
+ * caused Discord to silently drop custom emoji (no `id` field → treated as unicode).
  */
 export function buildCustomStatusActivity(
   text: string | null,
@@ -291,10 +426,9 @@ export function buildCustomStatusActivity(
     name: 'Custom Status',
   }
   if (text) activity.state = text
-  if (emoji) {
-    activity.emoji = {
-      name: emoji,
-    }
+  const parsedEmoji = parseCustomEmoji(emoji)
+  if (parsedEmoji) {
+    activity.emoji = parsedEmoji
   }
   return activity
 }

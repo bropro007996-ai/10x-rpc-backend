@@ -6,12 +6,9 @@ export const CONFIG = {
     clientId: process.env.DISCORD_CLIENT_ID || '',
     clientSecret: process.env.DISCORD_CLIENT_SECRET || '',
     botToken: process.env.DISCORD_BOT_TOKEN || '',
-    // The redirect_uri MUST point to the FRONTEND (Vercel) — NOT the backend.
-    // The frontend handles the full OAuth callback (exchanges code, creates session).
-    // The backend only reads Discord tokens from the shared database.
-    // This must match what's registered in Discord Developer Portal.
-    // Hardcoded to https://www.10xrpc.shop/auth/discord/callback — env var is ignored
-    // to prevent stale env vars from pointing to the wrong URL.
+    // The redirect_uri MUST point to the FRONTEND — the frontend handles the full
+    // OAuth callback (exchanges code, creates session). Hardcoded to prevent stale
+    // env vars from pointing to the wrong URL.
     redirectUri: 'https://www.10xrpc.shop/auth/discord/callback',
     // Gaming SDK scope — required for the Gaming SDK gateway connection.
     scope: process.env.DISCORD_OAUTH_SCOPE || 'openid identify sdk.social_layer_presence',
@@ -22,26 +19,18 @@ export const CONFIG = {
     // The Gaming SDK gateway (gateway.gaming-sdk.com) does NOT support custom images.
     gatewayUrl: process.env.DISCORD_GATEWAY_URL || 'wss://gateway.discord.gg/?v=10&encoding=json',
     serverId: process.env.DISCORD_SERVER_ID || '1549302358926823496',
-    inviteUrl: process.env.DISCORD_INVITE_URL || 'https://discord.gg/JjsPqbWnrH',
+    inviteUrl: process.env.DISCORD_INVITE_URL || 'https://discord.gg/jr27qeCZU',
   },
   app: {
     name: '10X RPC',
     tagline: 'Premium Discord Rich Presence',
     // app.url = where the user's browser is. After OAuth callback, redirect here.
-    // On Render: set NEXT_PUBLIC_APP_URL to the Vercel frontend URL (so callback redirects to Vercel).
-    // On Vercel: NEXT_PUBLIC_APP_URL = the Vercel URL itself (default).
     url: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
     trialDays: 30,
   },
   weather: {
     geocodeUrl: 'https://geocoding-api.open-meteo.com/v1/search',
     forecastUrl: 'https://api.open-meteo.com/v1/forecast',
-  },
-  // Backend server (24/7 daemon) — used by /uptime to health-check the daemon.
-  // Set RENDER_BACKEND_URL in production; empty/absent = daemon not deployed.
-  render: {
-    backendUrl: process.env.RENDER_BACKEND_URL || 'http://92.118.206.201:30225',
-    healthPath: '/health',
   },
   session: {
     cookieName: '10x_rpc_session',
